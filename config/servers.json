@@ -1,0 +1,8 @@
+{
+  "pollIntervalMs": 1000,
+  "renderIntervalMs": 500,
+  "servers": [
+    { "name": "web01", "host": "10.0.0.10", "port": 22, "user": "monitor" },
+    { "name": "db01",  "host": "10.0.0.11", "port": 22, "user": "monitor" }
+  ]
+}

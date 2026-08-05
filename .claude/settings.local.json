@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet --list-sdks)",
+      "Bash(dotnet build *)",
+      "Bash(dotnet publish *)",
+      "Bash(/c/Source/SSHRtm/bin/Release/net9.0-windows/win-x64/publish/SSHRtm.exe *)",
+      "PowerShell(dotnet build *)",
+      "PowerShell(dotnet publish *)",
+      "PowerShell($content = Get-Content C:\\\\Source\\\\SSHRtm\\\\UI\\\\App.cs -Raw; $idx = $content.IndexOf\\('EnterAltScreen'\\); if \\($idx -ge 0\\) { $slice = $content.Substring\\($idx, 60\\); [System.Text.Encoding]::UTF8.GetBytes\\($slice\\) | ForEach-Object { '{0:X2}' -f $_ } } else { 'not found' })"
+    ]
+  }
+}
