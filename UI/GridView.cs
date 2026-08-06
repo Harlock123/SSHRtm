@@ -64,7 +64,7 @@ public static class GridView
         return grid;
     }
 
-    public static IRenderable RenderHeader(string mode, string focusedServer, string focusedPanel, bool compact)
+    public static IRenderable RenderHeader(string mode, string focusedServer, string focusedPanel, bool compact, string? logFileName = null)
     {
         var ts = DateTime.Now.ToString("HH:mm:ss");
         string keys;
@@ -77,8 +77,11 @@ public static class GridView
         }
         else
         {
-            keys = $"[{Theme.Dim}]Esc[/] back  [{Theme.Dim}]Tab[/] panel  [{Theme.Dim}]↑↓[/] scroll  [{Theme.Dim}]PgUp/Dn[/] page  [{Theme.Dim}]Home/End[/] jump  [{Theme.Dim}]q[/] quit";
-            left = $"[{Theme.Accent}]SSHRtm[/] [{Theme.Dim}]{ts}[/]  view:[{Theme.Header}]{mode}[/]  server:[{Theme.Selected}]{Markup.Escape(focusedServer)}[/]  panel:[{Theme.Selected}]{focusedPanel}[/]";
+            keys = $"[{Theme.Dim}]Esc[/] back  [{Theme.Dim}]Tab[/] panel  [{Theme.Dim}]↑↓[/] scroll  [{Theme.Dim}]PgUp/Dn[/] page  [{Theme.Dim}]Home/End[/] jump  [{Theme.Dim}]L[/] log  [{Theme.Dim}]q[/] quit";
+            var logTag = logFileName is null
+                ? string.Empty
+                : $"  [{Theme.Crit}]REC[/] [{Theme.Header}]{Markup.Escape(logFileName)}[/]";
+            left = $"[{Theme.Accent}]SSHRtm[/] [{Theme.Dim}]{ts}[/]  view:[{Theme.Header}]{mode}[/]  server:[{Theme.Selected}]{Markup.Escape(focusedServer)}[/]  panel:[{Theme.Selected}]{focusedPanel}[/]{logTag}";
         }
         return new Markup($"{left}    {keys}");
     }

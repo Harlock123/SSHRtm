@@ -1,5 +1,6 @@
 using Spectre.Console;
 using Spectre.Console.Rendering;
+using SSHRtm.Metrics;
 
 namespace SSHRtm.UI;
 
@@ -35,6 +36,11 @@ public sealed class App
 
     private bool _compact;
     private int _gridOffset;
+
+    // CSV logging session — non-null iff logging is currently active.
+    private CsvLogger? _logger;
+    private CancellationTokenSource? _loggerCts;
+    private Task? _loggerTask;
 
     public App(AppConfig config, StateStore state, CancellationTokenSource cts)
     {
@@ -103,6 +109,7 @@ public sealed class App
         }
         finally
         {
+            StopLogging();
             Console.Write(LeaveAltScreen);
         }
     }
@@ -123,7 +130,10 @@ public sealed class App
     {
         var selected = Math.Clamp(_selected, 0, _config.Servers.Count - 1);
         var focusedName = _config.Servers[selected].Name;
-        var header = GridView.RenderHeader(_mode, focusedName, FocusNames[_detailFocus], _compact);
+        var logFile = _logger is not null && _logger.ServerName == focusedName
+            ? Path.GetFileName(_logger.FilePath)
+            : null;
+        var header = GridView.RenderHeader(_mode, focusedName, FocusNames[_detailFocus], _compact, logFile);
         var width = Math.Max(20, AnsiConsole.Console.Profile.Width);
         var height = Math.Max(10, AnsiConsole.Console.Profile.Height);
         var body = _mode == "grid"
@@ -257,7 +267,14 @@ public sealed class App
                 _cts.Cancel();
                 break;
             case ConsoleKey.Escape:
+                // Leaving the detail view closes any active log file, as
+                // requested — re-entering + pressing L again starts a new file
+                // with a fresh timestamp.
+                StopLogging();
                 _mode = "grid";
+                break;
+            case ConsoleKey.L:
+                ToggleLogging();
                 break;
             case ConsoleKey.Tab:
                 if ((key.Modifiers & ConsoleModifiers.Shift) != 0)
@@ -291,6 +308,77 @@ public sealed class App
         var total = GetFocusedPanelTotal();
         var max = Math.Max(0, total - 1);
         _detailScroll[_detailFocus] = Math.Clamp(_detailScroll[_detailFocus] + delta, 0, max);
+    }
+
+    private void ToggleLogging()
+    {
+        if (_logger is not null) StopLogging();
+        else                     StartLogging();
+    }
+
+    private void StartLogging()
+    {
+        var selected = Math.Clamp(_selected, 0, _config.Servers.Count - 1);
+        var serverName = _config.Servers[selected].Name;
+        var dir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+
+        try
+        {
+            _logger = new CsvLogger(dir, serverName);
+        }
+        catch
+        {
+            _logger = null;
+            return;
+        }
+
+        _loggerCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+        var logger = _logger;
+        var ct = _loggerCts.Token;
+        _loggerTask = Task.Run(() => LogLoop(logger, serverName, ct));
+    }
+
+    private void StopLogging()
+    {
+        var cts = _loggerCts;
+        var task = _loggerTask;
+        var logger = _logger;
+        _loggerCts = null;
+        _loggerTask = null;
+        _logger = null;
+
+        try { cts?.Cancel(); } catch { }
+        try { task?.Wait(500); } catch { }
+        cts?.Dispose();
+        logger?.Dispose();
+    }
+
+    private async Task LogLoop(CsvLogger logger, string serverName, CancellationToken ct)
+    {
+        Snapshot? last = null;
+        // Sample rate matches poll rate (capped at 500 ms so a slow poll config
+        // still checks reasonably often). We use reference-identity on Snapshot
+        // to skip duplicate writes between polls.
+        var tickMs = Math.Clamp(_config.PollIntervalMs, 100, 5000);
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var st = _state.Get(serverName);
+                if (st.Snapshot is not null && !ReferenceEquals(st.Snapshot, last))
+                {
+                    logger.Write(st.Snapshot);
+                    last = st.Snapshot;
+                }
+            }
+            catch
+            {
+                // Never let a log-write blow up the TUI. Losing a row is fine.
+            }
+
+            try { await Task.Delay(tickMs, ct); }
+            catch (OperationCanceledException) { break; }
+        }
     }
 
     private int GetFocusedPanelTotal()

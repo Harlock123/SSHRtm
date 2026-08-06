@@ -188,8 +188,73 @@ Ad-hoc mode does not read or write `servers.json` or `creds.dat`.
 | `↑` / `↓`       | Scroll the focused panel by one row.            |
 | `PgUp` / `PgDn` | Scroll by five rows.                            |
 | `Home` / `End`  | Jump to top / bottom of the focused panel.      |
-| `Esc`           | Back to grid.                                   |
-| `q`             | Quit.                                           |
+| `L`             | Toggle CSV logging for the current server.      |
+| `Esc`           | Back to grid (also stops logging).              |
+| `q`             | Quit (also stops logging).                      |
+
+---
+
+## CSV logging
+
+While viewing a server's detail screen, press **`L`** to start writing every
+sample to a CSV file. The header shows a red **REC** indicator plus the
+filename while logging is active.
+
+### File location and naming
+
+- Files are written to **the folder containing `SSHRtm.exe`** (the exe
+  directory, same folder used for portable `servers.json`).
+- Filename: **`{server-name}-{YYYYMMDD-HHMMSS}.csv`** — e.g.
+  `web01-20260805-142530.csv`. The timestamp is captured when `L` is pressed.
+- Server-name characters that are illegal in Windows filenames are replaced
+  with `_`.
+
+### What triggers a new row
+
+The logger runs on its own timer at the server's poll interval and writes a
+row every time a **new snapshot** arrives from the SSH poller. Duplicate ticks
+(same snapshot re-seen) are skipped, so row cadence matches the actual poll
+cadence, not the render cadence.
+
+### Schema
+
+The first row of every file is a header row. The schema is **discovered from
+the first snapshot and frozen** for the life of that file, because the column
+count depends on the target machine (how many CPUs / NICs / disks / mounts).
+Columns (in order):
+
+1. `hostname`, `num_cpu`, `uptime_sec`
+2. `load_1m`, `load_5m`, `load_15m`
+3. `cpu_overall_pct`, then one `cpu0_pct` … `cpuN_pct` column per core
+4. Memory: `mem_total_bytes`, `mem_used_bytes`, `mem_available_bytes`,
+   `mem_cached_bytes`, `mem_buffers_bytes`, `mem_used_pct`,
+   `swap_total_bytes`, `swap_used_bytes`, `swap_used_pct`
+5. Per NIC: `net_{iface}_rx_bps`, `net_{iface}_tx_bps`,
+   `net_{iface}_rx_pps`, `net_{iface}_tx_pps`
+6. Per disk: `disk_{dev}_read_bps`, `disk_{dev}_write_bps`,
+   `disk_{dev}_busy_pct`, `disk_{dev}_inflight`
+7. Per filesystem: `fs_{mount}_type`, `fs_{mount}_total_kb`,
+   `fs_{mount}_used_kb`, `fs_{mount}_avail_kb`, `fs_{mount}_used_pct`
+8. 20 fixed process slots: `proc1_pid`, `proc1_cpu_pct`, `proc1_mem_pct`,
+   `proc1_command`, `proc2_…`, up to `proc20_command`. Slot N is whatever
+   process is ranked N-th in that tick (empty if fewer than N processes were
+   returned).
+9. `timestamp` — always the **last** column, in `YYYYMMDD-HHMMSS` local time,
+   captured at the moment the row is written.
+
+If a NIC / disk / mount appears mid-session that wasn't in the frozen header,
+its values are dropped for that row. If one disappears, the column is written
+empty.
+
+### Lifecycle
+
+- Pressing `L` a second time stops and closes the current file cleanly.
+- **Leaving the detail view with `Esc` closes the file.** Re-entering the
+  same server and pressing `L` again opens a **new file** with a new
+  timestamp.
+- Quitting the app (`q`) flushes and closes any open file.
+- The stream is flushed after every row, so `tail -f` or reopening the CSV
+  in Excel shows fresh data during the session.
 
 ---
 
