@@ -7,7 +7,8 @@
       "Bash(/c/Source/SSHRtm/bin/Release/net9.0-windows/win-x64/publish/SSHRtm.exe *)",
       "PowerShell(dotnet build *)",
       "PowerShell(dotnet publish *)",
-      "PowerShell($content = Get-Content C:\\\\Source\\\\SSHRtm\\\\UI\\\\App.cs -Raw; $idx = $content.IndexOf\\('EnterAltScreen'\\); if \\($idx -ge 0\\) { $slice = $content.Substring\\($idx, 60\\); [System.Text.Encoding]::UTF8.GetBytes\\($slice\\) | ForEach-Object { '{0:X2}' -f $_ } } else { 'not found' })"
+      "PowerShell($content = Get-Content C:\\\\Source\\\\SSHRtm\\\\UI\\\\App.cs -Raw; $idx = $content.IndexOf\\('EnterAltScreen'\\); if \\($idx -ge 0\\) { $slice = $content.Substring\\($idx, 60\\); [System.Text.Encoding]::UTF8.GetBytes\\($slice\\) | ForEach-Object { '{0:X2}' -f $_ } } else { 'not found' })",
+      "PowerShell(Get-Item C:\\\\Source\\\\SSHRtm\\\\bin\\\\Release\\\\net9.0-windows\\\\win-x64\\\\publish\\\\SSHRtm.exe | Select-Object FullName, @{n='SizeMB';e={[math]::Round\\($_.Length/1MB,1\\)}}, LastWriteTime)"
     ]
   }
 }

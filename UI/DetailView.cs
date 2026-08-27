@@ -20,26 +20,58 @@ public static class DetailView
 
         var snap = entry.Snapshot;
 
-        // Budget: header row + 3 panel rows. Each panel eats ~3 lines chrome
-        // (top border, header, bottom border). Table panels lose 2 more to
-        // column headers + separator. Content lines below are what remains
-        // for actual data rows.
-        var usable = Math.Max(9, windowHeight - 3);
-        var perRow = Math.Max(6, usable / 3);
-        var listContent  = Math.Max(2, perRow - 3);
-        var tableContent = Math.Max(1, perRow - 5);
+        // Two independent stacked columns so nothing pads to match its neighbor:
+        //   Left : CPU  (natural)  →  NET  (≤5 rows)  →  FS     (absorbs rest)
+        //   Right: MEM  (fixed 5)  →  DISK (≤5 rows)  →  PROCS  (absorbs rest)
+        var usable = Math.Max(15, windowHeight - 3);
 
-        var cpuPanel   = BuildCpuPanel(snap, listContent,  focus == App.FocusCpu,   scroll[App.FocusCpu]);
+        var netN  = Math.Max(1, snap.NetRate.Count);
+        var diskN = Math.Max(1, snap.DiskRate.Count);
+        var fsN   = Math.Max(1, snap.Filesystems.Count);
+        var procN = Math.Max(1, snap.TopProcs.Count);
+
+        // Right column: MEM (5+2), DISK IO (up to 5+4), PROCS gets the rest.
+        var diskShown = Math.Min(diskN, 5);
+        var diskCell  = Math.Max(6, Math.Max(2, diskShown) + 4);
+        const int memCell = 7;
+        var procsMax  = Math.Max(3, usable - memCell - diskCell - 4);
+        var procsShown = Math.Min(procN, procsMax);
+
+        // Left column: CPU at natural size (ALL + one row per core), NET ≤ 5,
+        // FS takes the rest so mountpoints show without scrolling when they fit.
+        var netShown = Math.Min(netN, 5);
+        var netCell  = Math.Max(6, Math.Max(2, netShown) + 4);
+        var cpuContent = 1 + Math.Max(1, snap.NumCpu);
+        var cpuCell = cpuContent + 2;
+        var fsMax = Math.Max(3, usable - cpuCell - netCell - 2);
+        if (fsMax < 3)
+        {
+            // Not enough room even for a few mounts — steal from CPU.
+            cpuCell = Math.Max(7, usable - netCell - 5);
+            cpuContent = cpuCell - 2;
+            fsMax = Math.Max(3, usable - cpuCell - netCell - 2);
+        }
+        var fsShown = Math.Min(fsN, fsMax);
+
+        var cpuPanel   = BuildCpuPanel(snap, cpuContent, focus == App.FocusCpu, scroll[App.FocusCpu]);
         var memPanel   = BuildMemPanel(snap);
-        var netPanel   = BuildNetPanel(snap, tableContent, focus == App.FocusNet,   scroll[App.FocusNet]);
-        var diskPanel  = BuildDiskPanel(snap, tableContent, focus == App.FocusDisk, scroll[App.FocusDisk]);
-        var fsPanel    = BuildFsPanel(snap, listContent,   focus == App.FocusFs,    scroll[App.FocusFs]);
-        var procsPanel = BuildProcsPanel(snap, tableContent, focus == App.FocusProcs, scroll[App.FocusProcs]);
+        var netPanel   = BuildNetPanel(snap, netShown, focus == App.FocusNet, scroll[App.FocusNet]);
+        var diskPanel  = BuildDiskPanel(snap, diskShown, focus == App.FocusDisk, scroll[App.FocusDisk]);
+        var fsPanel    = BuildFsPanel(snap, fsShown, focus == App.FocusFs, scroll[App.FocusFs]);
+        var procsPanel = BuildProcsPanel(snap, procsShown, focus == App.FocusProcs, scroll[App.FocusProcs]);
+
+        var left = new Grid().AddColumn();
+        left.AddRow(cpuPanel);
+        left.AddRow(netPanel);
+        left.AddRow(fsPanel);
+
+        var right = new Grid().AddColumn();
+        right.AddRow(memPanel);
+        right.AddRow(diskPanel);
+        right.AddRow(procsPanel);
 
         var grid = new Grid().AddColumn().AddColumn();
-        grid.AddRow(cpuPanel, memPanel);
-        grid.AddRow(netPanel, diskPanel);
-        grid.AddRow(fsPanel, procsPanel);
+        grid.AddRow(left, right);
 
         return grid;
     }
@@ -100,6 +132,7 @@ public static class DetailView
                 $"{r.RxPps:N0}",
                 $"{r.TxPps:N0}");
         }
+        PadTable(table, rows - (to - from), 5);
 
         return WrapTable("NETWORK", table, clamped, rows, all.Count, focused);
     }
@@ -125,6 +158,7 @@ public static class DetailView
                 $"{d.BusyPct:N1}%",
                 $"{d.InFlight}");
         }
+        PadTable(table, rows - (to - from), 5);
 
         return WrapTable("DISK IO", table, clamped, rows, all.Count, focused);
     }
@@ -145,6 +179,7 @@ public static class DetailView
             var mount = fs.Mount.Length > 22 ? fs.Mount.Substring(0, 22) : fs.Mount;
             lines.Add($"{Markup.Escape(mount),-22} {Theme.BarMarkup(fs.UsedPct, 16)} [{Theme.Dim}]({Markup.Escape(fs.Type)})[/]");
         }
+        for (int i = to - from; i < rows; i++) lines.Add(string.Empty);
         var title = MakeTitle("FILESYSTEMS", clamped, rows, all.Count, focused);
         return MakePanel(title, string.Join('\n', lines), focused);
     }
@@ -166,8 +201,17 @@ public static class DetailView
             var cmd = p.Command.Length > 36 ? p.Command.Substring(0, 36) : p.Command;
             table.AddRow($"{p.Pid}", $"{p.Cpu:N1}", $"{p.Mem:N1}", Markup.Escape(cmd));
         }
+        PadTable(table, rows - (to - from), 4);
 
         return WrapTable("TOP PROCS", table, clamped, rows, all.Count, focused);
+    }
+
+    private static void PadTable(Table table, int missing, int columnCount)
+    {
+        if (missing <= 0) return;
+        var blanks = new string[columnCount];
+        for (int i = 0; i < columnCount; i++) blanks[i] = string.Empty;
+        for (int i = 0; i < missing; i++) table.AddRow(blanks);
     }
 
     private static (int from, int to, int clampedOffset) ClampWindow(int offset, int total, int visible)
