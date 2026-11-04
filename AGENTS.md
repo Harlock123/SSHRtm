@@ -7,13 +7,13 @@ the keys and the CSV schema in detail; this file covers how the code fits togeth
 
 A real-time terminal monitor for Linux servers (tested against RHEL 9), run from a Windows console. It polls
 `/proc`, `df` and `ps` over persistent SSH sessions (SSH.NET) and draws a btop-style TUI with Spectre.Console.
-Nothing is installed on the targets. It targets `net9.0-windows` and uses DPAPI, so it builds and runs on Windows
+Nothing is installed on the targets. It targets `net10.0-windows` and uses DPAPI, so it builds and runs on Windows
 only.
 
 ## Commands
 
 ```bash
-dotnet build SSHRtm.sln                           # .NET 9 SDK, on Windows
+dotnet build SSHRtm.sln                           # .NET 10 SDK, on Windows
 dotnet publish SSHRtm.csproj -c Release           # self-contained single-file win-x64 (set in the .csproj)
 SSHRtm.exe --help
 SSHRtm.exe --config D:\path\to\servers.json       # choose the config; creds.dat lives beside it
