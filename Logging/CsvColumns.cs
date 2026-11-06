@@ -3,50 +3,21 @@ using SSHRtm.Metrics;
 
 namespace SSHRtm;
 
-// CSV logger for a single server's detail-view stream.
-//
-// The set of columns depends on the machine (how many CPUs / NICs / disks /
-// mounts it has), which we don't know until we see the first snapshot. So we
-// discover columns from the first snapshot, write them as the header row,
-// and freeze the schema. Later snapshots use the same column order; any keys
-// that only appear later are dropped (rare — would mean a NIC/disk/mount
-// showed up mid-session).
-public sealed class CsvLogger : IDisposable
+// One snapshot as CSV cells, keyed by column name, in column order. Both the
+// single-server logger and the combined logger write these same columns; the
+// combined one prefixes each with the server's name.
+public static class CsvColumns
 {
-    private const int ProcSlots = 20;
+    public const int ProcSlots = 20;
     private static readonly string[] LoadNames = { "1m", "5m", "15m" };
 
-    private readonly StreamWriter _writer;
-    private List<string>? _columns;
+    /// <summary>Local time as the logs write it: YYYYMMDD-HHMMSS.</summary>
+    public const string TimestampFormat = "yyyyMMdd-HHmmss";
 
-    public string FilePath { get; }
-    public string ServerName { get; }
+    /// <summary>The combined log's timestamp, with milliseconds so ticks never collide.</summary>
+    public const string PreciseTimestampFormat = "yyyyMMdd-HHmmss.fff";
 
-    public CsvLogger(string directory, string serverName)
-    {
-        Directory.CreateDirectory(directory);
-        ServerName = serverName;
-        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-        FilePath = Path.Combine(directory, $"{SafeFileName(serverName)}-{stamp}.csv");
-        _writer = new StreamWriter(FilePath, append: false) { NewLine = "\n" };
-    }
-
-    public void Write(Snapshot snap)
-    {
-        var row = Flatten(snap);
-
-        if (_columns is null)
-        {
-            _columns = row.Keys.ToList();
-            _writer.WriteLine(string.Join(",", _columns.Select(EscapeCsv)));
-        }
-
-        var values = _columns.Select(c => row.TryGetValue(c, out var v) ? v : string.Empty);
-        _writer.WriteLine(string.Join(",", values.Select(EscapeCsv)));
-        _writer.Flush(); // keep flush on so `tail -f` / Excel-reopen shows fresh data
-    }
-
-    private static Dictionary<string, string> Flatten(Snapshot s)
+    public static Dictionary<string, string> Flatten(Snapshot s, bool includeProcesses = true)
     {
         var d = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -106,40 +77,36 @@ public sealed class CsvLogger : IDisposable
             d[$"fs_{mount}_used_pct"] = fs.UsedPct.ToString(CultureInfo.InvariantCulture);
         }
 
-        // Fixed proc slots so the schema stays constant even though the top-N
-        // list rotates: procN is whatever process is ranked N-th at that tick.
-        for (int i = 0; i < ProcSlots; i++)
+        if (includeProcesses)
         {
-            var p = i < s.TopProcs.Count ? s.TopProcs[i] : null;
-            d[$"proc{i + 1}_pid"]     = p?.Pid.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            d[$"proc{i + 1}_cpu_pct"] = p is null ? string.Empty : Fmt(p.Cpu);
-            d[$"proc{i + 1}_mem_pct"] = p is null ? string.Empty : Fmt(p.Mem);
-            d[$"proc{i + 1}_command"] = p?.Command ?? string.Empty;
+            // Fixed proc slots so the schema stays constant even though the top-N
+            // list rotates: procN is whatever process is ranked N-th at that tick.
+            for (int i = 0; i < ProcSlots; i++)
+            {
+                var p = i < s.TopProcs.Count ? s.TopProcs[i] : null;
+                d[$"proc{i + 1}_pid"]     = p?.Pid.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+                d[$"proc{i + 1}_cpu_pct"] = p is null ? string.Empty : Fmt(p.Cpu);
+                d[$"proc{i + 1}_mem_pct"] = p is null ? string.Empty : Fmt(p.Mem);
+                d[$"proc{i + 1}_command"] = p?.Command ?? string.Empty;
+            }
         }
 
-        d["timestamp"] = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         return d;
     }
 
-    private static string Fmt(double v)
+    public static string Fmt(double v)
         => v.ToString("F2", CultureInfo.InvariantCulture);
 
-    private static string EscapeCsv(string s)
+    public static string EscapeCsv(string s)
     {
         if (s.IndexOfAny(new[] { ',', '"', '\r', '\n' }) < 0) return s;
         return "\"" + s.Replace("\"", "\"\"") + "\"";
     }
 
-    private static string SafeFileName(string name)
+    public static string SafeFileName(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();
-        var chars = name.Select(c => Array.IndexOf(invalid, c) >= 0 ? '_' : c).ToArray();
+        var chars = name.Select(c => Array.IndexOf(invalid, c) >= 0 || c is '\\' or '/' or ':' ? '_' : c).ToArray();
         return new string(chars);
-    }
-
-    public void Dispose()
-    {
-        try { _writer.Flush(); } catch { }
-        _writer.Dispose();
     }
 }

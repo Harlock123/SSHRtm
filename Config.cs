@@ -6,6 +6,8 @@ public sealed class AppConfig
 {
     public int PollIntervalMs { get; init; } = 1000;
     public int RenderIntervalMs { get; init; } = 500;
+    /// <summary>Whether combined (multi-server) logs carry each server's 20 top-process slots.</summary>
+    public bool CombinedLogProcesses { get; init; } = true;
     public List<ServerConfig> Servers { get; init; } = new();
 }
 

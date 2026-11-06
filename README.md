@@ -57,6 +57,7 @@ SSHRtm.exe --config D:\path\to\servers.json
 | ------------------ | ------ | ------- | ------------------------------------------------ |
 | `pollIntervalMs`   | int    | 1000    | How often each SSH poller pulls fresh metrics.  |
 | `renderIntervalMs` | int    | 500     | How often the TUI redraws.                       |
+| `combinedLogProcesses` | bool | true  | Whether combined logs include each server's 20 top-process slots (80 columns per server). |
 | `servers[].name`   | string | —       | Unique label — appears as the tile header and is the key used in `creds.dat`. |
 | `servers[].host`   | string | —       | Hostname or IP.                                  |
 | `servers[].port`   | int    | 22      | SSH port.                                        |
@@ -164,6 +165,16 @@ Full ad-hoc flag set:
 
 Ad-hoc mode does not read or write `servers.json` or `creds.dat`.
 
+### Starting a combined log at launch
+
+`--log` starts a [combined log](#combined-logs-several-servers-in-one-file) as
+soon as the UI opens, without any keypresses. It works with a config file or ad hoc:
+
+```
+SSHRtm.exe --log web01,db01      # these servers (names as in servers.json)
+SSHRtm.exe --log all             # every configured server
+```
+
 ---
 
 ## Keys
@@ -177,8 +188,11 @@ Ad-hoc mode does not read or write `servers.json` or `creds.dat`.
 | `PgUp` / `PgDn` | Page through servers when they overflow.  |
 | `Home` / `End`  | Jump to first / last server.              |
 | `c`             | Toggle standard ↔ compact tiles.          |
+| `Space`         | Mark / unmark the selected server for a combined log (✓ on its tile). |
+| `a` / `n`       | Mark all servers / clear the marks.       |
+| `L`             | Start / stop a combined log of the marked servers (the selected one if none is marked). Logged tiles show a red ●. |
 | `Enter`         | Drill into the selected server.           |
-| `q` / `Esc`     | Quit.                                     |
+| `q` / `Esc`     | Quit (also stops any log).                |
 
 **Detail view**
 
@@ -189,12 +203,20 @@ Ad-hoc mode does not read or write `servers.json` or `creds.dat`.
 | `PgUp` / `PgDn` | Scroll by five rows.                            |
 | `Home` / `End`  | Jump to top / bottom of the focused panel.      |
 | `L`             | Toggle CSV logging for the current server.      |
-| `Esc`           | Back to grid (also stops logging).              |
+| `Esc`           | Back to grid (stops this server's log; a combined log keeps running). |
 | `q`             | Quit (also stops logging).                      |
 
 ---
 
 ## CSV logging
+
+There are two kinds of log:
+
+- **Single server**: on a server's detail screen, press **`L`**. Described
+  below.
+- **Combined**: mark several servers in the grid and press **`L`** there. Every
+  marked server goes into one file. See
+  [Combined logs](#combined-logs-several-servers-in-one-file).
 
 While viewing a server's detail screen, press **`L`** to start writing every
 sample to a CSV file. The header shows a red **REC** indicator plus the
@@ -255,6 +277,60 @@ empty.
 - Quitting the app (`q`) flushes and closes any open file.
 - The stream is flushed after every row, so `tail -f` or reopening the CSV
   in Excel shows fresh data during the session.
+
+### Combined logs: several servers in one file
+
+In the grid, mark servers with **`Space`** (or **`a`** for all), then press
+**`L`**. The header shows **REC N** and the file name, and each logged tile
+shows a red ●. The log keeps running while you move around the grid and in
+and out of detail views. Press **`L`** in the grid again, or quit, to close it.
+`--log` starts one at launch.
+
+All servers are polled at once in any case, so a combined log adds no SSH
+traffic.
+
+**File name**: the server names joined with `+` for up to three
+(`web01+db01-20261106-141500.csv`), otherwise
+`group-{N}servers-{YYYYMMDD-HHMMSS}.csv`. It goes in the same folder as
+single-server logs.
+
+**One row per tick**, at the poll interval. Every server's cells sit side by
+side in the row, under one timestamp:
+
+1. `timestamp`: the **first** column, local time as `YYYYMMDD-HHMMSS.fff`
+   (with milliseconds).
+2. For each server, in config order:
+   - `{server}::status`: `Ok`, `Error` or `Connecting`.
+   - `{server}::sample_age_s`: how old that server's snapshot was when the row
+     was written.
+   - The server's columns, exactly as in a single-server log (`hostname` …
+     `proc20_command`), each prefixed `{server}::`. For example
+     `web01::cpu_overall_pct` and `db01::net_eth0_rx_bps`.
+
+`::` separates the server from the column because server names may contain
+dots.
+
+**Gaps**: a server's cells are filled from its latest snapshot while that
+snapshot is fresh. A snapshot is fresh while the status is `Ok` and it is no
+older than three poll intervals, or five seconds, whichever is longer. A server
+that is down, reconnecting or stalled gets empty cells, and its `status`
+column says why, so a chart shows the outage as a gap. A server that is
+polled slightly slower than the tick can have the same values on two rows in a
+row; `sample_age_s` shows this.
+
+**Header**: each server's columns depend on its machine. The header therefore
+waits up to 15 seconds for every marked server's first snapshot. Rows from that
+wait are kept, not lost. If a server first reports after the header is written,
+its columns are added at the end of the header. The file is rewritten once, and
+the earlier rows get empty cells in those columns. As with single-server logs,
+a NIC, disk or mount that appears later in a session is dropped.
+
+**Size**: each server adds roughly 100 columns plus 80 for the process slots.
+Set `"combinedLogProcesses": false` in `servers.json` to leave the process slots
+out.
+
+The [SSHRTM Log Visualizer](https://github.com/Harlock123/SSHRtmLogVisualizer)
+opens combined logs and can chart one measure across every server.
 
 ---
 

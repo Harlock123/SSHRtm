@@ -31,7 +31,9 @@ public static class GridView
         int consoleWidth,
         int availableHeight,
         bool compact,
-        int gridOffset)
+        int gridOffset,
+        IReadOnlySet<string>? marked = null,
+        IReadOnlyList<string>? logging = null)
     {
         var cols = ComputeCols(consoleWidth, compact);
         var rows = ComputeRows(availableHeight, compact);
@@ -47,7 +49,9 @@ public static class GridView
         var idx = 0;
         for (int i = offset; i < end; i++)
         {
-            rowBuf[idx++] = BuildTile(state.Get(servers[i].Name), i == selectedIndex, compact);
+            var name = servers[i].Name;
+            var tag = TileTag(marked?.Contains(name) == true, logging?.Contains(name) == true);
+            rowBuf[idx++] = BuildTile(state.Get(name), i == selectedIndex, compact, tag);
             if (idx == cols)
             {
                 grid.AddRow(rowBuf);
@@ -64,16 +68,23 @@ public static class GridView
         return grid;
     }
 
-    public static IRenderable RenderHeader(string mode, string focusedServer, string focusedPanel, bool compact, string? logFileName = null)
+    public static IRenderable RenderHeader(
+        string mode, string focusedServer, string focusedPanel, bool compact, string? logFileName = null,
+        string? combinedLogFileName = null, int combinedCount = 0, int markedCount = 0)
     {
+        var combinedTag = combinedLogFileName is null
+            ? string.Empty
+            : $"  [{Theme.Crit}]REC {combinedCount}[/] [{Theme.Header}]{Markup.Escape(combinedLogFileName)}[/]";
         var ts = DateTime.Now.ToString("HH:mm:ss");
         string keys;
         string left;
         if (mode == "grid")
         {
             var tileMode = compact ? "compact" : "standard";
-            keys = $"[{Theme.Dim}]arrows[/] nav  [{Theme.Dim}]Enter[/] detail  [{Theme.Dim}]1-9[/] jump  [{Theme.Dim}]c[/] tiles  [{Theme.Dim}]q[/] quit";
-            left = $"[{Theme.Accent}]SSHRtm[/] [{Theme.Dim}]{ts}[/]  view:[{Theme.Header}]{mode}[/]  tiles:[{Theme.Header}]{tileMode}[/]  focus:[{Theme.Selected}]{Markup.Escape(focusedServer)}[/]";
+            var logKey = combinedLogFileName is null ? "log marked" : "stop log";
+            keys = $"[{Theme.Dim}]arrows[/] nav  [{Theme.Dim}]Enter[/] detail  [{Theme.Dim}]Space[/] mark  [{Theme.Dim}]a/n[/] all/none  [{Theme.Dim}]L[/] {logKey}  [{Theme.Dim}]c[/] tiles  [{Theme.Dim}]q[/] quit";
+            var markedTag = markedCount > 0 ? $"  marked:[{Theme.Selected}]{markedCount}[/]" : string.Empty;
+            left = $"[{Theme.Accent}]SSHRtm[/] [{Theme.Dim}]{ts}[/]  view:[{Theme.Header}]{mode}[/]  tiles:[{Theme.Header}]{tileMode}[/]  focus:[{Theme.Selected}]{Markup.Escape(focusedServer)}[/]{markedTag}{combinedTag}";
         }
         else
         {
@@ -81,15 +92,20 @@ public static class GridView
             var logTag = logFileName is null
                 ? string.Empty
                 : $"  [{Theme.Crit}]REC[/] [{Theme.Header}]{Markup.Escape(logFileName)}[/]";
-            left = $"[{Theme.Accent}]SSHRtm[/] [{Theme.Dim}]{ts}[/]  view:[{Theme.Header}]{mode}[/]  server:[{Theme.Selected}]{Markup.Escape(focusedServer)}[/]  panel:[{Theme.Selected}]{focusedPanel}[/]{logTag}";
+            left = $"[{Theme.Accent}]SSHRtm[/] [{Theme.Dim}]{ts}[/]  view:[{Theme.Header}]{mode}[/]  server:[{Theme.Selected}]{Markup.Escape(focusedServer)}[/]  panel:[{Theme.Selected}]{focusedPanel}[/]{logTag}{combinedTag}";
         }
         return new Markup($"{left}    {keys}");
     }
 
-    private static IRenderable BuildTile(ServerState entry, bool selected, bool compact)
-        => compact ? BuildCompactTile(entry, selected) : BuildStandardTile(entry, selected);
+    // What goes before a tile's name: a red dot while its server is in the
+    // combined log, a check mark while it's marked for one.
+    private static string TileTag(bool marked, bool logging) =>
+        logging ? $"[{Theme.Crit}]●[/] " : marked ? $"[{Theme.Selected}]✓[/] " : string.Empty;
 
-    private static IRenderable BuildStandardTile(ServerState entry, bool selected)
+    private static IRenderable BuildTile(ServerState entry, bool selected, bool compact, string tag)
+        => compact ? BuildCompactTile(entry, selected, tag) : BuildStandardTile(entry, selected, tag);
+
+    private static IRenderable BuildStandardTile(ServerState entry, bool selected, string tag)
     {
         var borderColor = selected ? Theme.Selected : Theme.Border;
         var titleColor = selected ? Theme.Selected : Theme.Header;
@@ -127,14 +143,14 @@ public static class GridView
 
         return new Panel(new Markup(body))
         {
-            Header = new PanelHeader($"[{titleColor}]{Markup.Escape(entry.Name)}[/]"),
+            Header = new PanelHeader($"{tag}[{titleColor}]{Markup.Escape(entry.Name)}[/]"),
             Border = BoxBorder.Rounded,
             BorderStyle = new Style(borderColor),
             Expand = true,
         };
     }
 
-    private static IRenderable BuildCompactTile(ServerState entry, bool selected)
+    private static IRenderable BuildCompactTile(ServerState entry, bool selected, string tag)
     {
         var borderColor = selected ? Theme.Selected : Theme.Border;
         var titleColor = selected ? Theme.Selected : Theme.Header;
@@ -162,7 +178,7 @@ public static class GridView
 
         return new Panel(new Markup(body))
         {
-            Header = new PanelHeader($"[{titleColor}]{Markup.Escape(entry.Name)}[/]"),
+            Header = new PanelHeader($"{tag}[{titleColor}]{Markup.Escape(entry.Name)}[/]"),
             Border = BoxBorder.Rounded,
             BorderStyle = new Style(borderColor),
             Expand = true,

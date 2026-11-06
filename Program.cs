@@ -122,13 +122,37 @@ else
     }
 }
 
+// --log web01,db01 (or --log all) starts a combined log of those servers as soon as the UI opens.
+var autoLog = new List<string>();
+if (GetArg("--log") is { } logArg)
+{
+    var names = logArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (names.Length == 1 && names[0].Equals("all", StringComparison.OrdinalIgnoreCase))
+    {
+        autoLog.AddRange(config.Servers.Select(s => s.Name));
+    }
+    else
+    {
+        foreach (var n in names)
+        {
+            var match = config.Servers.FirstOrDefault(s => s.Name.Equals(n, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                AnsiConsole.MarkupLine($"[red]--log: no server named {Markup.Escape(n)} in the config.[/]");
+                return 1;
+            }
+            if (!autoLog.Contains(match.Name)) autoLog.Add(match.Name);
+        }
+    }
+}
+
 var state = new StateStore(config.Servers.Select(s => s.Name));
 var pollerHost = new PollerHost(config, creds, state, cts.Token);
 var pollTask = pollerHost.RunAsync();
 
 try
 {
-    var app = new App(config, state, cts);
+    var app = new App(config, state, cts, autoLog);
     await app.RunAsync();
 }
 finally
@@ -181,6 +205,9 @@ static void PrintHelp()
     AnsiConsole.MarkupLine("    1. <exe-folder>\\servers.json    (portable — creds.dat lives here too)");
     AnsiConsole.MarkupLine("    2. %APPDATA%\\SSHRtm\\servers.json");
     AnsiConsole.MarkupLine("  creds.dat is always co-located with the loaded servers.json.");
+    AnsiConsole.MarkupLine("");
+    AnsiConsole.MarkupLine("[bold]Logging:[/]");
+    AnsiConsole.MarkupLine("  --log <a,b,...|all>     start a combined CSV log of these servers at launch");
     AnsiConsole.MarkupLine("");
     AnsiConsole.MarkupLine("  --help / -h             show this");
     AnsiConsole.MarkupLine("");

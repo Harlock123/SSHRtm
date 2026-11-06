@@ -42,18 +42,39 @@ public sealed class App
     private CancellationTokenSource? _loggerCts;
     private Task? _loggerTask;
 
-    public App(AppConfig config, StateStore state, CancellationTokenSource cts)
+    // Servers marked in the grid (Space), and the combined log of them (L in
+    // the grid) — non-null iff that log is running. It carries on in the grid
+    // and the detail views until L is pressed again in the grid, or the app quits.
+    private readonly HashSet<string> _marked = new(StringComparer.Ordinal);
+    private CombinedCsvLogger? _combined;
+    private CancellationTokenSource? _combinedCts;
+    private Task? _combinedTask;
+    private readonly IReadOnlyList<string> _autoLog;
+
+    public App(AppConfig config, StateStore state, CancellationTokenSource cts, IReadOnlyList<string>? autoLog = null)
     {
         _config = config;
         _state = state;
         _cts = cts;
+        _autoLog = autoLog ?? Array.Empty<string>();
     }
+
+    /// <summary>The servers marked for a combined log, in the config's order.</summary>
+    public IReadOnlyList<string> Marked => _config.Servers.Select(s => s.Name).Where(_marked.Contains).ToList();
+
+    /// <summary>The combined log running now, if any.</summary>
+    public CombinedCsvLogger? CombinedLog => _combined;
 
     public async Task RunAsync()
     {
         // Alt screen: no scrollback means the mouse wheel and PgUp can't scroll
         // the live region away, and we don't touch the user's original terminal.
         Console.Write(EnterAltScreen);
+        if (_autoLog.Count > 0)
+        {
+            foreach (var name in _autoLog) _marked.Add(name);
+            StartCombinedLogging();
+        }
         try
         {
             // Outer loop restarts the Live display whenever the console dims
@@ -110,6 +131,7 @@ public sealed class App
         finally
         {
             StopLogging();
+            StopCombinedLogging();
             Console.Write(LeaveAltScreen);
         }
     }
@@ -133,11 +155,15 @@ public sealed class App
         var logFile = _logger is not null && _logger.ServerName == focusedName
             ? Path.GetFileName(_logger.FilePath)
             : null;
-        var header = GridView.RenderHeader(_mode, focusedName, FocusNames[_detailFocus], _compact, logFile);
+        var combinedFile = _combined is null ? null : Path.GetFileName(_combined.FilePath);
+        var header = GridView.RenderHeader(
+            _mode, focusedName, FocusNames[_detailFocus], _compact, logFile,
+            combinedFile, _combined?.Servers.Count ?? 0, _marked.Count);
         var width = Math.Max(20, AnsiConsole.Console.Profile.Width);
         var height = Math.Max(10, AnsiConsole.Console.Profile.Height);
         var body = _mode == "grid"
-            ? GridView.Render(_state, _config.Servers, selected, width, height - 1, _compact, _gridOffset)
+            ? GridView.Render(_state, _config.Servers, selected, width, height - 1, _compact, _gridOffset,
+                _marked, _combined?.Servers)
             : DetailView.Render(_state.Get(focusedName), height, _detailFocus, _detailScroll);
         return new Rows(header, body);
     }
@@ -151,7 +177,8 @@ public sealed class App
         }
     }
 
-    private void HandleKey(ConsoleKeyInfo key)
+    /// <summary>Handles one key press as the console delivers it.</summary>
+    public void HandleKey(ConsoleKeyInfo key)
     {
         if (_mode == "detail")
         {
@@ -193,6 +220,22 @@ public sealed class App
             case ConsoleKey.Tab:
                 _selected = (_selected + 1) % _config.Servers.Count;
                 EnsureSelectedVisible();
+                break;
+            case ConsoleKey.Spacebar:
+                {
+                    var name = _config.Servers[Math.Clamp(_selected, 0, _config.Servers.Count - 1)].Name;
+                    if (!_marked.Remove(name)) _marked.Add(name);
+                }
+                break;
+            case ConsoleKey.A:
+                foreach (var srv in _config.Servers) _marked.Add(srv.Name);
+                break;
+            case ConsoleKey.N:
+                _marked.Clear();
+                break;
+            case ConsoleKey.L:
+                if (_combined is not null) StopCombinedLogging();
+                else                       StartCombinedLogging();
                 break;
             case ConsoleKey.C:
                 _compact = !_compact;
@@ -320,11 +363,9 @@ public sealed class App
     {
         var selected = Math.Clamp(_selected, 0, _config.Servers.Count - 1);
         var serverName = _config.Servers[selected].Name;
-        var dir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
-
         try
         {
-            _logger = new CsvLogger(dir, serverName);
+            _logger = new CsvLogger(LogDirectory(), serverName);
         }
         catch
         {
@@ -370,6 +411,75 @@ public sealed class App
                     logger.Write(st.Snapshot);
                     last = st.Snapshot;
                 }
+            }
+            catch
+            {
+                // Never let a log-write blow up the TUI. Losing a row is fine.
+            }
+
+            try { await Task.Delay(tickMs, ct); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    /// <summary>Where log files go; the exe's folder unless set (tests set it).</summary>
+    public string? LogFolder { get; set; }
+
+    private string LogDirectory()
+        => LogFolder ?? Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+
+    /// <summary>Starts a combined log of the marked servers, or of the selected one when none is marked.</summary>
+    public void StartCombinedLogging()
+    {
+        if (_combined is not null) return;
+        var servers = Marked.ToList();
+        if (servers.Count == 0)
+        {
+            servers.Add(_config.Servers[Math.Clamp(_selected, 0, _config.Servers.Count - 1)].Name);
+        }
+
+        try
+        {
+            var path = Path.Combine(LogDirectory(), CombinedCsvLogger.DefaultFileName(servers, DateTime.Now));
+            _combined = new CombinedCsvLogger(path, servers, CombinedLogOptions.For(_config));
+        }
+        catch
+        {
+            _combined = null;
+            return;
+        }
+
+        _combinedCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+        var logger = _combined;
+        var ct = _combinedCts.Token;
+        _combinedTask = Task.Run(() => CombinedLogLoop(logger, ct));
+    }
+
+    public void StopCombinedLogging()
+    {
+        var cts = _combinedCts;
+        var task = _combinedTask;
+        var logger = _combined;
+        _combinedCts = null;
+        _combinedTask = null;
+        _combined = null;
+
+        try { cts?.Cancel(); } catch { }
+        try { task?.Wait(500); } catch { }
+        cts?.Dispose();
+        logger?.Dispose();
+    }
+
+    private async Task CombinedLogLoop(CombinedCsvLogger logger, CancellationToken ct)
+    {
+        // One row per tick at the poll interval; each server's latest snapshot
+        // fills its cells while it's fresh.
+        var tickMs = Math.Clamp(_config.PollIntervalMs, 100, 5000);
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                logger.Write(DateTime.UtcNow, _state.Get);
             }
             catch
             {

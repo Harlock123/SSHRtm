@@ -1,4 +1,4 @@
-# Every push: build, then publish SSHRtm as a self-contained single-file program for Windows on
+# Every push: build and test, then publish SSHRtm as a self-contained single-file program for Windows on
 # Intel/AMD and ARM (it keeps saved passwords with Windows DPAPI, so it is Windows-only). The builds are
 # attached to the workflow run; pushes to the default branch also refresh the "latest" pre-release, and a v*
 # tag (e.g. v0.1.0) makes a proper release.
@@ -34,6 +34,9 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Build
         run: dotnet build SSHRtm.sln -c Release -p:EnableWindowsTargeting=true
+      - name: Test
+        # The tests compile the logging, metrics and UI code for plain net10.0, so they run on Linux.
+        run: dotnet test tests/SSHRtm.Tests -c Release
 
   publish:
     needs: build
